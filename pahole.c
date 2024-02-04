@@ -1278,6 +1278,7 @@ struct btf_feature {
 	BTF_FEATURE(enum64, skip_encoding_btf_enum64, true),
 	BTF_FEATURE(optimized_func, btf_gen_optimized, false),
 	BTF_FEATURE(consistent_func, skip_encoding_btf_inconsistent_proto, false),
+	BTF_FEATURE(decl_tag_kfuncs, btf_decl_tag_kfuncs, false),
 };
 
 #define BTF_MAX_FEATURE_STR	1024
