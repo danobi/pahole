@@ -110,11 +110,6 @@ struct btf_encoder {
 	} functions;
 };
 
-struct btf_func {
-	const char *name;
-	int	    type_id;
-};
-
 /* Half open interval representing range of addresses containing kfuncs */
 struct btf_kfunc_set_range {
 	size_t start;
@@ -1443,79 +1438,14 @@ static char *get_func_name(const char *sym)
 	return func;
 }
 
-static int btf_func_cmp(const void *_a, const void *_b)
-{
-	const struct btf_func *a = _a;
-	const struct btf_func *b = _b;
-
-	return strcmp(a->name, b->name);
-}
-
-/*
- * Collects all functions described in BTF.
- * Returns non-zero on error.
- */
-static int btf_encoder__collect_btf_funcs(struct btf_encoder *encoder, struct gobuffer *funcs)
+static int btf_encoder__tag_kfunc(struct btf_encoder *encoder, const char *kfunc)
 {
 	struct btf *btf = encoder->btf;
-	int nr_types, type_id;
+	struct elf_function *target;
 	int err = -1;
 
-	/* First collect all the func entries into an array */
-	nr_types = btf__type_cnt(btf);
-	for (type_id = 1; type_id < nr_types; type_id++) {
-		const struct btf_type *type;
-		struct btf_func func = {};
-		const char *name;
-
-		type = btf__type_by_id(btf, type_id);
-		if (!type) {
-			fprintf(stderr, "%s: malformed BTF, can't resolve type for ID %d\n",
-				__func__, type_id);
-			err = -EINVAL;
-			goto out;
-		}
-
-		if (!btf_is_func(type))
-			continue;
-
-		name = btf__name_by_offset(btf, type->name_off);
-		if (!name) {
-			fprintf(stderr, "%s: malformed BTF, can't resolve name for ID %d\n",
-				__func__, type_id);
-			err = -EINVAL;
-			goto out;
-		}
-
-		func.name = name;
-		func.type_id = type_id;
-		err = gobuffer__add(funcs, &func, sizeof(func));
-		if (err < 0)
-			goto out;
-	}
-
-	/* Now that we've collected funcs, sort them by name */
-	qsort((void *)gobuffer__entries(funcs), gobuffer__nr_entries(funcs),
-	      sizeof(struct btf_func), btf_func_cmp);
-
-	err = 0;
-out:
-	return err;
-}
-
-static int btf_encoder__tag_kfunc(struct btf_encoder *encoder, struct gobuffer *funcs, const char *kfunc)
-{
-	struct btf_func key = { .name = kfunc };
-	struct btf *btf = encoder->btf;
-	struct btf_func *target;
-	const void *base;
-	unsigned int cnt;
-	int err = -1;
-
-	base = gobuffer__entries(funcs);
-	cnt = gobuffer__nr_entries(funcs);
-	target = bsearch(&key, base, cnt, sizeof(key), btf_func_cmp);
-	if (!target) {
+	target = btf_encoder__find_function(encoder, kfunc, 0);
+	if (!target || !target->btf_id) {
 		fprintf(stderr, "%s: failed to find kfunc '%s' in BTF\n", __func__, kfunc);
 		goto out;
 	}
@@ -1525,7 +1455,7 @@ static int btf_encoder__tag_kfunc(struct btf_encoder *encoder, struct gobuffer *
 	 * We are ok to do this b/c we will later btf__dedup() to remove
 	 * any duplicates.
 	 */
-	err = btf__add_decl_tag(btf, BTF_KFUNC_TYPE_TAG, target->type_id, -1);
+	err = btf__add_decl_tag(btf, BTF_KFUNC_TYPE_TAG, target->btf_id, -1);
 	if (err < 0) {
 		fprintf(stderr, "%s: failed to insert kfunc decl tag for '%s': %d\n",
 			__func__, kfunc, err);
@@ -1541,7 +1471,6 @@ static int btf_encoder__tag_kfuncs(struct btf_encoder *encoder)
 {
 	const char *filename = encoder->filename;
 	struct gobuffer btf_kfunc_ranges = {};
-	struct gobuffer btf_funcs = {};
 	Elf_Data *symbols = NULL;
 	Elf_Data *idlist = NULL;
 	Elf_Scn *symscn = NULL;
@@ -1623,12 +1552,6 @@ static int btf_encoder__tag_kfuncs(struct btf_encoder *encoder)
 	}
 	nr_syms = shdr.sh_size / shdr.sh_entsize;
 
-	err = btf_encoder__collect_btf_funcs(encoder, &btf_funcs);
-	if (err) {
-		fprintf(stderr, "%s: failed to collect BTF funcs\n", __func__);
-		goto out;
-	}
-
 	/* First collect all kfunc set ranges.
 	 *
 	 * Note we choose not to sort these ranges and accept a linear
@@ -1697,7 +1620,7 @@ static int btf_encoder__tag_kfuncs(struct btf_encoder *encoder)
 			continue;
 		}
 
-		err = btf_encoder__tag_kfunc(encoder, &btf_funcs, func);
+		err = btf_encoder__tag_kfunc(encoder, func);
 		if (err) {
 			fprintf(stderr, "%s: failed to tag kfunc '%s'\n", __func__, func);
 			free(func);
@@ -1708,7 +1631,6 @@ static int btf_encoder__tag_kfuncs(struct btf_encoder *encoder)
 
 	err = 0;
 out:
-	__gobuffer__delete(&btf_funcs);
 	__gobuffer__delete(&btf_kfunc_ranges);
 	if (elf)
 		elf_end(elf);
