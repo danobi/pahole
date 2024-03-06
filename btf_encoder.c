@@ -63,6 +63,7 @@ struct elf_function {
 	size_t		prefixlen;
 	struct function	*function;
 	struct btf_encoder_state state;
+	int		 btf_id;
 };
 
 struct var_info {
@@ -905,7 +906,7 @@ static int32_t btf_encoder__save_func(struct btf_encoder *encoder, struct functi
 	return 0;
 }
 
-static int32_t btf_encoder__add_func(struct btf_encoder *encoder, struct function *fn)
+static int32_t btf_encoder__add_func(struct btf_encoder *encoder, struct function *fn, struct elf_function *func)
 {
 	int btf_fnproto_id, btf_fn_id, tag_type_id;
 	struct llvm_annotation *annot;
@@ -927,6 +928,7 @@ static int32_t btf_encoder__add_func(struct btf_encoder *encoder, struct functio
 			return -1;
 		}
 	}
+	func->btf_id = btf_fn_id;
 	return 0;
 }
 
@@ -980,7 +982,7 @@ static void btf_encoder__add_saved_funcs(struct btf_encoder *encoder)
 			}
 		} else {
 			encoder->type_id_off = func->state.type_id_off;
-			btf_encoder__add_func(encoder, fn);
+			btf_encoder__add_func(encoder, fn, func);
 		}
 		fn->proto.processed = 1;
 	}
@@ -2249,7 +2251,7 @@ int btf_encoder__encode_cu(struct btf_encoder *encoder, struct cu *cu, struct co
 		if (save)
 			err = btf_encoder__save_func(encoder, fn, func);
 		else
-			err = btf_encoder__add_func(encoder, fn);
+			err = btf_encoder__add_func(encoder, fn, func);
 		if (err)
 			goto out;
 	}
