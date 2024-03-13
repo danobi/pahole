@@ -3213,6 +3213,7 @@ static int pahole_threads_collect(struct conf_load *conf, int nr_threads, void *
 		if (err < 0)
 			goto out;
 	}
+	btf_encoder__finalize(btf_encoder);
 	err = 0;
 
 out:

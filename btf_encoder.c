@@ -730,6 +730,8 @@ static int32_t btf_encoder__add_var_secinfo(struct btf_encoder *encoder, uint32_
 	return gobuffer__add(&encoder->percpu_secinfo, &si, sizeof(si));
 }
 
+static void btf_encoder__append_functions(struct btf_encoder *encoder, struct btf_encoder *other);
+
 int32_t btf_encoder__add_encoder(struct btf_encoder *encoder, struct btf_encoder *other)
 {
 	struct gobuffer *var_secinfo_buf = &other->percpu_secinfo;
@@ -744,6 +746,7 @@ int32_t btf_encoder__add_encoder(struct btf_encoder *encoder, struct btf_encoder
 		return 0;
 
 	btf_encoder__add_saved_funcs(other);
+	btf_encoder__append_functions(encoder, other);
 
 	for (i = 0; i < nr_var_secinfo; i++) {
 		vsi = (struct btf_var_secinfo *)var_secinfo_buf->entries + i;
@@ -1014,6 +1017,31 @@ static void *reallocarray_grow(void *ptr, int *nmemb, size_t size)
 	if (new)
 		*nmemb = new_nmemb;
 	return new;
+}
+
+static void btf_encoder__append_functions(struct btf_encoder *encoder, struct btf_encoder *other)
+{
+	int want = encoder->functions.cnt + other->functions.cnt;
+	size_t entry_sz = sizeof(encoder->functions.entries[0]);
+	void *end;
+
+	if (encoder->functions.allocated < want) {
+		void *new = realloc(encoder->functions.entries, want * entry_sz);
+		encoder->functions.entries = new;
+		encoder->functions.allocated = want;
+	}
+
+	end = &encoder->functions.entries[encoder->functions.cnt];
+	memcpy(end, other->functions.entries, other->functions.cnt * entry_sz);
+	encoder->functions.cnt += other->functions.cnt;
+	encoder->functions.suffix_cnt += other->functions.suffix_cnt;
+}
+
+void btf_encoder__finalize(struct btf_encoder *encoder)
+{
+	size_t entry_sz = sizeof(encoder->functions.entries[0]);
+
+	qsort(encoder->functions.entries, encoder->functions.cnt, entry_sz, functions_cmp);
 }
 
 static int btf_encoder__collect_function(struct btf_encoder *encoder, GElf_Sym *sym)
